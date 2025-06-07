@@ -1,236 +1,154 @@
-// Replace with your Firebase config
+// Firebase Configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyBbSZ1cFjCU4gbE8vktUdjc5vuevkD07S4",
-  authDomain: "videochat-80e75.firebaseapp.com",
-  projectId: "videochat-80e75",
-  storageBucket: "videochat-80e75.firebasestorage.app",
-  messagingSenderId: "375111220632",
-  appId: "1:375111220632:web:d71f495f6d4246aeb63fed"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
 
 firebase.initializeApp(firebaseConfig);
-const firestore = firebase.firestore();
+const db = firebase.firestore();
 
-// Variables
-let localStream, screenStream;
-let localUserId, myName;
-let roomId = "main-room";
-let peerConnections = {};
-let screenSharing = false;
+const peer = new Peer();
+const videoGrid = document.getElementById("video-grid");
+const chatSidebar = document.getElementById("chatSidebar");
+const chatMessages = document.getElementById("chatMessages");
+const chatInput = document.getElementById("chatInput");
+const timerEl = document.getElementById("timer");
+const joinSound = document.getElementById("joinSound");
+const leaveSound = document.getElementById("leaveSound");
 
-// UI Elements
-const videoGrid = document.getElementById("videoGrid");
-const btnJoin = document.getElementById("btnJoin");
-const inputName = document.getElementById("inputName");
-const btnCamera = document.getElementById("btnCamera");
-const btnMic = document.getElementById("btnMic");
-const btnScreenShare = document.getElementById("btnScreenShare");
-const btnDisconnect = document.getElementById("btnDisconnect");
+let localStream;
+let currentCall;
+let username = localStorage.getItem("username") || "";
+let startTime;
 
-// ICE Config
-const configuration = {
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-};
+function startApp() {
+  const input = document.getElementById("usernameInput");
+  username = input.value.trim();
+  if (!username) return;
+  localStorage.setItem("username", username);
+  document.getElementById("overlay").style.display = "none";
+  initialize();
+}
 
-btnJoin.onclick = async () => {
-  myName = inputName.value.trim();
-  if (!myName) return alert("Please enter your name");
+async function initialize() {
+  startTime = Date.now();
+  updateTimer();
+  setInterval(updateTimer, 1000);
 
-  localUserId = Date.now().toString();
-  document.getElementById("nameModal").style.display = "none";
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  const myVideo = createVideoElement(peer.id, localStream, username);
+  videoGrid.appendChild(myVideo.container);
 
-  await startLocalStream();
-
-  const roomRef = firestore.collection("rooms").doc(roomId);
-  await roomRef.collection("peers").doc(localUserId).set({ name: myName });
-
-  setupFirestoreListeners();
-
-  const peersSnapshot = await roomRef.collection("peers").get();
-  peersSnapshot.forEach(doc => {
-    const peerId = doc.id;
-    if (peerId !== localUserId) {
-      createPeerConnection(peerId, doc.data().name, true);
-    }
+  peer.on("open", (id) => {
+    db.collection("calls").doc("room").collection("peers").doc(id).set({ username, joined: firebase.firestore.FieldValue.serverTimestamp() });
   });
 
-  [btnCamera, btnMic, btnScreenShare, btnDisconnect].forEach(btn => btn.disabled = false);
-};
+  peer.on("call", (call) => {
+    call.answer(localStream);
+    call.on("stream", (remoteStream) => {
+      if (!document.getElementById(call.peer)) {
+        const vid = createVideoElement(call.peer, remoteStream);
+        videoGrid.appendChild(vid.container);
+        joinSound.play();
+      }
+    });
+    call.on("close", () => {
+      removePeer(call.peer);
+      leaveSound.play();
+    });
+  });
 
-async function startLocalStream() {
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-  const localVideo = createVideoBlock(localStream, localUserId, myName);
-  videoGrid.appendChild(localVideo);
-}
-
-function createVideoBlock(stream, id, name) {
-  const container = document.createElement("div");
-  container.className = "relative";
-
-  const video = document.createElement("video");
-  video.autoplay = true;
-  video.playsInline = true;
-  video.srcObject = stream;
-  video.className = "w-full rounded-lg border border-gray-300";
-  container.appendChild(video);
-
-  const label = document.createElement("div");
-  label.textContent = name || "Unknown";
-  label.className = "absolute bottom-0 bg-black bg-opacity-60 text-white text-sm px-2 py-1 rounded-t w-full text-center";
-  container.appendChild(label);
-
-  container.id = `user-${id}`;
-  return container;
-}
-
-function setupFirestoreListeners() {
-  const candidatesRef = firestore.collection("rooms").doc(roomId).collection("candidates");
-
-  candidatesRef.onSnapshot(snapshot => {
-    snapshot.docChanges().forEach(async change => {
-      if (change.type === "added") {
-        const data = change.doc.data();
-        if (data.to === localUserId) {
-          const pc = getOrCreatePeerConnection(data.from, data.name);
-          if (data.candidate?.type) {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.candidate));
-            if (data.candidate.type === "offer") {
-              const answer = await pc.createAnswer();
-              await pc.setLocalDescription(answer);
-              candidatesRef.add({
-                from: localUserId,
-                to: data.from,
-                candidate: answer,
-                name: myName
-              });
-            }
-          } else {
-            pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+  db.collection("calls").doc("room").collection("peers").onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(change => {
+      const peerId = change.doc.id;
+      const data = change.doc.data();
+      if (peerId !== peer.id && change.type === "added") {
+        const call = peer.call(peerId, localStream);
+        call.on("stream", (remoteStream) => {
+          if (!document.getElementById(call.peer)) {
+            const vid = createVideoElement(call.peer, remoteStream, data.username);
+            videoGrid.appendChild(vid.container);
+            joinSound.play();
           }
-        }
+        });
+        call.on("close", () => {
+          removePeer(call.peer);
+          leaveSound.play();
+        });
       }
     });
   });
 
-  firestore.collection("rooms").doc(roomId).collection("peers")
-    .onSnapshot(snapshot => {
-      snapshot.docChanges().forEach(change => {
-        const peerId = change.doc.id;
-        if (peerId === localUserId) return;
-
-        if (change.type === "added") {
-          const name = change.doc.data().name;
-          if (!peerConnections[peerId]) {
-            createPeerConnection(peerId, name, true);
-          }
-        } else if (change.type === "removed") {
-          removePeer(peerId);
-        }
-      });
-    });
+  window.addEventListener("beforeunload", disconnectCall);
 }
 
-function getOrCreatePeerConnection(peerId, name) {
-  if (peerConnections[peerId]) return peerConnections[peerId];
+function createVideoElement(id, stream, name = "") {
+  const container = document.createElement("div");
+  container.className = "relative";
 
-  const pc = new RTCPeerConnection(configuration);
-  peerConnections[peerId] = pc;
+  const video = document.createElement("video");
+  video.srcObject = stream;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.className = "rounded-xl max-w-[300px] max-h-[200px] cursor-pointer";
+  video.id = id;
 
-  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+  const label = document.createElement("div");
+  label.textContent = name;
+  label.className = "text-center mt-2 text-sm text-white";
 
-  pc.ontrack = (e) => {
-    let container = document.getElementById(`user-${peerId}`);
-    if (!container) {
-      container = createVideoBlock(e.streams[0], peerId, name);
-      videoGrid.appendChild(container);
-    } else {
-      const video = container.querySelector("video");
-      video.srcObject = e.streams[0];
-    }
-  };
-
-  pc.onicecandidate = (event) => {
-    if (event.candidate) {
-      firestore.collection("rooms").doc(roomId).collection("candidates").add({
-        from: localUserId,
-        to: peerId,
-        candidate: event.candidate.toJSON(),
-        name: myName
-      });
-    }
-  };
-
-  return pc;
-}
-
-async function createPeerConnection(peerId, name, isCaller) {
-  const pc = getOrCreatePeerConnection(peerId, name);
-  if (isCaller) {
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    firestore.collection("rooms").doc(roomId).collection("candidates").add({
-      from: localUserId,
-      to: peerId,
-      candidate: offer,
-      name: myName
-    });
-  }
-}
-
-function removePeer(peerId) {
-  const container = document.getElementById(`user-${peerId}`);
-  if (container) container.remove();
-
-  if (peerConnections[peerId]) {
-    peerConnections[peerId].close();
-    delete peerConnections[peerId];
-  }
-}
-
-// Controls
-btnCamera.onclick = () => {
-  const videoTrack = localStream.getVideoTracks()[0];
-  videoTrack.enabled = !videoTrack.enabled;
-  btnCamera.textContent = videoTrack.enabled ? "Turn Camera Off" : "Turn Camera On";
-};
-
-btnMic.onclick = () => {
-  const audioTrack = localStream.getAudioTracks()[0];
-  audioTrack.enabled = !audioTrack.enabled;
-  btnMic.textContent = audioTrack.enabled ? "Mute" : "Unmute";
-};
-
-btnScreenShare.onclick = async () => {
-  if (screenSharing) return;
-
-  screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-  screenSharing = true;
-
-  const screenTrack = screenStream.getVideoTracks()[0];
-  Object.values(peerConnections).forEach(pc => {
-    const sender = pc.getSenders().find(s => s.track.kind === "video");
-    sender.replaceTrack(screenTrack);
+  video.addEventListener("click", () => {
+    video.classList.toggle("w-full");
+    video.classList.toggle("h-full");
+    video.classList.toggle("z-50");
   });
 
-  const localVideo = document.querySelector(`#user-${localUserId} video`);
-  localVideo.srcObject = screenStream;
+  container.appendChild(video);
+  container.appendChild(label);
+  return { video, container };
+}
 
-  screenTrack.onended = () => {
-    Object.values(peerConnections).forEach(pc => {
-      const sender = pc.getSenders().find(s => s.track.kind === "video");
-      sender.replaceTrack(localStream.getVideoTracks()[0]);
-    });
-    localVideo.srcObject = localStream;
-    screenSharing = false;
-  };
-};
+function removePeer(id) {
+  const vid = document.getElementById(id);
+  if (vid && vid.parentElement) {
+    vid.parentElement.remove();
+  }
+}
 
-btnDisconnect.onclick = async () => {
-  const roomRef = firestore.collection("rooms").doc(roomId);
-  await roomRef.collection("peers").doc(localUserId).delete();
+function toggleVideo() {
+  const enabled = localStream.getVideoTracks()[0].enabled;
+  localStream.getVideoTracks()[0].enabled = !enabled;
+}
 
-  localStream.getTracks().forEach(t => t.stop());
-  Object.values(peerConnections).forEach(pc => pc.close());
-  peerConnections = {};
-  location.reload();
-};
+function disconnectCall() {
+  if (peer.id) {
+    db.collection("calls").doc("room").collection("peers").doc(peer.id).delete();
+  }
+  peer.destroy();
+  window.location.reload();
+}
+
+function toggleChat() {
+  chatSidebar.classList.toggle("translate-x-full");
+}
+
+function sendMessage() {
+  const msg = chatInput.value.trim();
+  if (!msg) return;
+  const timestamp = new Date().toLocaleTimeString();
+  const messageEl = document.createElement("div");
+  messageEl.innerHTML = `<strong>${username}</strong> <span class='text-xs text-gray-400'>[${timestamp}]</span><br>${msg}`;
+  chatMessages.appendChild(messageEl);
+  chatInput.value = "";
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function updateTimer() {
+  const now = Date.now();
+  const diff = Math.floor((now - startTime) / 1000);
+  timerEl.textContent = `Connected: ${diff}s`;
+}
