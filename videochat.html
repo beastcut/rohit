@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple Group Video Chat</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 0; background: #222; color: #eee; }
+  #joinScreen, #videoChat { max-width: 900px; margin: 40px auto; }
+  #joinScreen { display: flex; flex-direction: column; gap: 15px; }
+  input, button { padding: 10px; font-size: 16px; border-radius: 4px; border: none; }
+  input { width: 100%; max-width: 400px; }
+  button { cursor: pointer; background: #3a86ff; color: white; border: none; }
+  button:hover { background: #265ecf; }
+
+  #videos { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  video { width: 200px; height: 150px; background: black; border-radius: 8px; object-fit: cover; }
+  #localVideo { border: 3px solid #3a86ff; }
+
+  #controls { margin-top: 15px; display: flex; gap: 10px; justify-content: center; }
+  #controls button { background: #555; }
+  #controls button.active { background: #3a86ff; }
+</style>
+</head>
+<body>
+
+<div id="joinScreen">
+  <h2>Enter Your Name and Room to Join</h2>
+  <input type="text" id="nameInput" placeholder="Your name" />
+  <input type="text" id="roomInput" placeholder="Room ID (e.g. room1)" />
+  <button id="joinBtn">Join Room</button>
+</div>
+
+<div id="videoChat" style="display:none;">
+  <h2>Room: <span id="roomLabel"></span></h2>
+  <div id="videos">
+    <video id="localVideo" autoplay muted playsinline></video>
+  </div>
+  <div id="controls">
+    <button id="muteBtn">Mute</button>
+    <button id="camBtn">Camera Off</button>
+    <button id="leaveBtn" style="background:#e03e3e;">Leave Room</button>
+  </div>
+</div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+
+<script>
+  // Your Firebase config here (replace with your own)
+  const firebaseConfig = {
+  apiKey: "AIzaSyAPhlmCS7t_NV7VqhRtOiFGp1QFhLzqMh4",
+  authDomain: "chat-7b8fc.firebaseapp.com",
+  projectId: "chat-7b8fc",
+  storageBucket: "chat-7b8fc.firebasestorage.app",
+  messagingSenderId: "604456029175",
+  appId: "1:604456029175:web:f61e014fe2113671a7bcf2"
+};
+
+  firebase.initializeApp(firebaseConfig);
+  const firestore = firebase.firestore();
+
+  const joinScreen = document.getElementById("joinScreen");
+  const videoChat = document.getElementById("videoChat");
+  const joinBtn = document.getElementById("joinBtn");
+  const nameInput = document.getElementById("nameInput");
+  const roomInput = document.getElementById("roomInput");
+  const roomLabel = document.getElementById("roomLabel");
+  const videosDiv = document.getElementById("videos");
+  const localVideo = document.getElementById("localVideo");
+  const muteBtn = document.getElementById("muteBtn");
+  const camBtn = document.getElementById("camBtn");
+  const leaveBtn = document.getElementById("leaveBtn");
+
+  let localStream = null;
+  let peerConnections = {};
+  let roomRef = null;
+  let userName = "";
+  let userId = null;
+  let roomId = "";
+
+  const servers = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  };
+
+  joinBtn.onclick = async () => {
+    userName = nameInput.value.trim();
+    roomId = roomInput.value.trim();
+
+    if (!userName) return alert("Please enter your name");
+    if (!roomId) return alert("Please enter room ID");
+
+    joinScreen.style.display = "none";
+    videoChat.style.display = "block";
+    roomLabel.textContent = roomId;
+
+    userId = Math.floor(Math.random() * 1000000000).toString(); // simple random id for this session
+
+    await startLocalStream();
+    await joinRoom(roomId);
+  };
+
+  async function startLocalStream() {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localVideo.srcObject = localStream;
+    } catch (e) {
+      alert("Could not get media: " + e.message);
+    }
+  }
+
+  async function joinRoom(roomId) {
+    roomRef = firestore.collection("rooms").doc(roomId);
+
+    const usersRef = roomRef.collection("users");
+
+    // Add self to users collection
+    await usersRef.doc(userId).set({ name: userName, joinedAt: Date.now() });
+
+    // Listen for new users joining
+    usersRef.onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        const otherUserId = change.doc.id;
+        if (otherUserId === userId) return; // ignore self
+
+        if (change.type === "added") {
+          startPeerConnection(otherUserId, true);
+        }
+        if (change.type === "removed") {
+          removePeer(otherUserId);
+        }
+      });
+    });
+
+    // Listen for offers
+    roomRef.collection("offers").onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(async change => {
+        if (change.type === "added") {
+          const data = change.doc.data();
+          if (data.receiver === userId) {
+            await handleOffer(data);
+            await roomRef.collection("offers").doc(change.doc.id).delete();
+          }
+        }
+      });
+    });
+
+    // Listen for answers
+    roomRef.collection("answers").onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(async change => {
+        if (change.type === "added") {
+          const data = change.doc.data();
+          if (data.receiver === userId) {
+            await handleAnswer(data);
+            await roomRef.collection("answers").doc(change.doc.id).delete();
+          }
+        }
+      });
+    });
+
+    // Listen for ICE candidates
+    roomRef.collection("candidates").onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(async change => {
+        if (change.type === "added") {
+          const data = change.doc.data();
+          if (data.receiver === userId && peerConnections[data.sender]) {
+            const candidate = new RTCIceCandidate(data.candidate);
+            await peerConnections[data.sender].addIceCandidate(candidate);
+            await roomRef.collection("candidates").doc(change.doc.id).delete();
+          }
+        }
+      });
+    });
+
+    window.addEventListener("beforeunload", leaveRoom);
+  }
+
+  async function startPeerConnection(peerId, isOfferer) {
+    if (peerConnections[peerId]) return; // already exists
+
+    const pc = new RTCPeerConnection(servers);
+    peerConnections[peerId] = pc;
+
+    // Add local tracks
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    // Remote stream setup
+    const remoteStream = new MediaStream();
+    const remoteVideo = document.createElement("video");
+    remoteVideo.autoplay = true;
+    remoteVideo.playsInline = true;
+    remoteVideo.id = "video-" + peerId;
+    remoteVideo.srcObject = remoteStream;
+    remoteVideo.style.width = "200px";
+    remoteVideo.style.height = "150px";
+    videosDiv.appendChild(remoteVideo);
+
+    pc.ontrack = event => {
+      event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+    };
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        roomRef.collection("candidates").add({
+          sender: userId,
+          receiver: peerId,
+          candidate: event.candidate.toJSON()
+        });
+      }
+    };
+
+    if (isOfferer) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await roomRef.collection("offers").add({
+        sender: userId,
+        receiver: peerId,
+        sdp: offer.sdp,
+        type: offer.type
+      });
+    }
+  }
+
+  async function handleOffer(data) {
+    const peerId = data.sender;
+    if (peerConnections[peerId]) return; // already connected
+
+    const pc = new RTCPeerConnection(servers);
+    peerConnections[peerId] = pc;
+
+    // Add local tracks
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+    // Remote stream setup
+    const remoteStream = new MediaStream();
+    const remoteVideo = document.createElement("video");
+    remoteVideo.autoplay = true;
+    remoteVideo.playsInline = true;
+    remoteVideo.id = "video-" + peerId;
+    remoteVideo.srcObject = remoteStream;
+    remoteVideo.style.width = "200px";
+    remoteVideo.style.height = "150px";
+    videosDiv.appendChild(remoteVideo);
+
+    pc.ontrack = event => {
+      event.streams[0].getTracks().forEach(track => remoteStream.addTrack(track));
+    };
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        roomRef.collection("candidates").add({
+          sender: userId,
+          receiver: peerId,
+          candidate: event.candidate.toJSON()
+        });
+      }
+    };
+
+    const desc = new RTCSessionDescription({ type: data.type, sdp: data.sdp });
+    await pc.setRemoteDescription(desc);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    await roomRef.collection("answers").add({
+      sender: userId,
+      receiver: peerId,
+      sdp: answer.sdp,
+      type: answer.type
+    });
+  }
+
+  async function handleAnswer(data) {
+    const peerId = data.sender;
+    const pc = peerConnections[peerId];
+    if (!pc) return;
+
+    const desc = new RTCSessionDescription({ type: data.type, sdp: data.sdp });
+    await pc.setRemoteDescription(desc);
+  }
+
+  function removePeer(peerId) {
+    const pc = peerConnections[peerId];
+    if (pc) {
+      pc.close();
+      delete peerConnections[peerId];
+    }
+    const video = document.getElementById("video-" + peerId);
+    if (video) {
+      video.srcObject = null;
+      video.remove();
+    }
+  }
+
+  async function leaveRoom() {
+    if (!roomRef) return;
+
+    // Remove self from users collection
+    await roomRef.collection("users").doc(userId).delete();
+
+    // Close all peer connections
+    Object.values(peerConnections).forEach(pc => pc.close());
+    peerConnections = {};
+
+    // Stop local tracks
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+    }
+  }
+
+  leaveBtn.onclick = async () => {
+    await leaveRoom();
+    location.reload();
+  };
+
+  muteBtn.onclick = () => {
+    if (!localStream) return;
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (!audioTrack) return;
+    audioTrack.enabled = !audioTrack.enabled;
+    muteBtn.textContent = audioTrack.enabled ? "Mute" : "Unmute";
+    muteBtn.classList.toggle("active", !audioTrack.enabled);
+  };
+
+  camBtn.onclick = () => {
+    if (!localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+    videoTrack.enabled = !videoTrack.enabled;
+    camBtn.textContent = videoTrack.enabled ? "Camera Off" : "Camera On";
+    camBtn.classList.toggle("active", !videoTrack.enabled);
+  };
+</script>
+
+</body>
+</html>
