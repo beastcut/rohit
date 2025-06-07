@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-gray-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Group Video Chat</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="flex flex-col min-h-screen">
+
+  <!-- Name Modal -->
+  <div id="nameModal" class="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+    <div class="bg-white p-6 rounded-lg text-center shadow-lg max-w-sm w-full">
+      <h2 class="text-xl font-bold mb-4">Enter Your Name</h2>
+      <input type="text" id="inputName" class="w-full border border-gray-300 rounded px-3 py-2 mb-4 focus:outline-none focus:ring focus:border-blue-400" placeholder="Your name" />
+      <button id="btnJoin" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded font-semibold w-full transition-all">Join</button>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="bg-white border-b p-4 flex justify-center flex-wrap gap-3 shadow-md sticky top-0 z-40">
+    <button id="btnCamera" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded shadow disabled:opacity-50" disabled>Turn Camera Off</button>
+    <button id="btnMic" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded shadow disabled:opacity-50" disabled>Mute</button>
+    <button id="btnScreenShare" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded shadow disabled:opacity-50" disabled>Share Screen</button>
+    <button id="btnDisconnect" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded shadow disabled:opacity-50" disabled>Disconnect</button>
+  </div>
+
+  <!-- Video Grid -->
+  <div id="videoGrid" class="grid gap-4 p-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 grow"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
+
