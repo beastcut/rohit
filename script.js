@@ -1,11 +1,10 @@
-// Firebase Configuration
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_STORAGE_BUCKET",
-  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyBbSZ1cFjCU4gbE8vktUdjc5vuevkD07S4",
+  authDomain: "videochat-80e75.firebaseapp.com",
+  projectId: "videochat-80e75",
+  storageBucket: "videochat-80e75.firebasestorage.app",
+  messagingSenderId: "375111220632",
+  appId: "1:375111220632:web:d71f495f6d4246aeb63fed"
 };
 
 firebase.initializeApp(firebaseConfig);
