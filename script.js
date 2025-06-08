@@ -1,153 +1,191 @@
 const firebaseConfig = {
-  apiKey: "AIzaSyBbSZ1cFjCU4gbE8vktUdjc5vuevkD07S4",
-  authDomain: "videochat-80e75.firebaseapp.com",
-  projectId: "videochat-80e75",
-  storageBucket: "videochat-80e75.firebasestorage.app",
-  messagingSenderId: "375111220632",
-  appId: "1:375111220632:web:d71f495f6d4246aeb63fed"
+  apiKey: "AIzaSyAhIYskdZDrW2lfjGKnflGIbHNlTojoXho",
+  authDomain: "videochat-1f348.firebaseapp.com",
+  projectId: "videochat-1f348",
+  storageBucket: "videochat-1f348.appspot.com",
+  messagingSenderId: "1054111027678",
+  appId: "1:1054111027678:web:99f547f3fda3bc8d7c4d4f"
 };
+
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
-const peer = new Peer();
-const videoGrid = document.getElementById("video-grid");
-const chatSidebar = document.getElementById("chatSidebar");
-const chatMessages = document.getElementById("chatMessages");
-const chatInput = document.getElementById("chatInput");
-const timerEl = document.getElementById("timer");
-const joinSound = document.getElementById("joinSound");
-const leaveSound = document.getElementById("leaveSound");
+const nameModal = document.getElementById('nameModal');
+const nameInput = document.getElementById('nameInput');
+const joinBtn = document.getElementById('joinBtn');
+const videos = document.getElementById('videos');
+const toggleVideoBtn = document.getElementById('toggleVideoBtn');
+const toggleChatBtn = document.getElementById('toggleChatBtn');
+const chatBox = document.getElementById('chatBox');
+const chatMessages = document.getElementById('chatMessages');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
 
-let localStream;
-let currentCall;
-let username = localStorage.getItem("username") || "";
-let startTime;
+const ROOM_ID = "default_room";
+let localStream = null;
+let peers = {};
+let peerNames = {};
+let userId = null;
+let userName = null;
 
-function startApp() {
-  const input = document.getElementById("usernameInput");
-  username = input.value.trim();
-  if (!username) return;
-  localStorage.setItem("username", username);
-  document.getElementById("overlay").style.display = "none";
-  initialize();
-}
+const roomRef = db.collection('rooms').doc(ROOM_ID);
+const usersRef = roomRef.collection('users');
+const signalsRef = roomRef.collection('signals');
 
-async function initialize() {
-  startTime = Date.now();
-  updateTimer();
-  setInterval(updateTimer, 1000);
+joinBtn.onclick = async () => {
+  const val = nameInput.value.trim();
+  if (!val) return alert("Please enter your name");
+  userName = val;
+  nameModal.style.display = 'none';
+  await start();
+};
 
-  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-  const myVideo = createVideoElement(peer.id, localStream, username);
-  videoGrid.appendChild(myVideo.container);
+async function start() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); // mic removed
+  } catch (e) {
+    alert("Cannot access camera: " + e.message);
+    return;
+  }
 
-  peer.on("open", (id) => {
-    db.collection("calls").doc("room").collection("peers").doc(id).set({ username, joined: firebase.firestore.FieldValue.serverTimestamp() });
-  });
+  addVideoElement('local', localStream, userName + " (You)");
+  userId = usersRef.doc().id;
+  await usersRef.doc(userId).set({ name: userName, joinedAt: Date.now() });
 
-  peer.on("call", (call) => {
-    call.answer(localStream);
-    call.on("stream", (remoteStream) => {
-      if (!document.getElementById(call.peer)) {
-        const vid = createVideoElement(call.peer, remoteStream);
-        videoGrid.appendChild(vid.container);
-        joinSound.play();
-      }
-    });
-    call.on("close", () => {
-      removePeer(call.peer);
-      leaveSound.play();
-    });
-  });
-
-  db.collection("calls").doc("room").collection("peers").onSnapshot(snapshot => {
+  usersRef.onSnapshot(snapshot => {
     snapshot.docChanges().forEach(change => {
-      const peerId = change.doc.id;
-      const data = change.doc.data();
-      if (peerId !== peer.id && change.type === "added") {
-        const call = peer.call(peerId, localStream);
-        call.on("stream", (remoteStream) => {
-          if (!document.getElementById(call.peer)) {
-            const vid = createVideoElement(call.peer, remoteStream, data.username);
-            videoGrid.appendChild(vid.container);
-            joinSound.play();
-          }
-        });
-        call.on("close", () => {
-          removePeer(call.peer);
-          leaveSound.play();
-        });
+      const doc = change.doc;
+      const id = doc.id;
+      if (id === userId) return;
+      peerNames[id] = doc.data().name;
+      if (change.type === 'added') createPeerConnection(id, peerNames[id], true);
+      else if (change.type === 'removed') {
+        removeVideoElement(id);
+        if (peers[id]) { peers[id].close(); delete peers[id]; }
       }
     });
   });
 
-  window.addEventListener("beforeunload", disconnectCall);
+  signalsRef.onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(async change => {
+      const data = change.doc.data();
+      if (!data || data.to !== userId) return;
+      const fromId = data.from;
+      if (data.type === 'offer') await handleOffer(fromId, data.sdp);
+      else if (data.type === 'answer') await handleAnswer(fromId, data.sdp);
+      else if (data.type === 'candidate') await handleCandidate(fromId, data.candidate);
+      signalsRef.doc(change.doc.id).delete();
+    });
+  });
+
+  roomRef.collection('chat').orderBy('timestamp').onSnapshot(snapshot => {
+    chatMessages.innerHTML = "";
+    snapshot.docs.forEach(doc => {
+      const msg = doc.data();
+      const el = document.createElement('div');
+      el.className = 'p-1 rounded ' + (msg.senderId === userId ? 'bg-blue-600 self-end' : 'bg-gray-700 self-start');
+      el.textContent = `${msg.senderName}: ${msg.text}`;
+      chatMessages.appendChild(el);
+    });
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  });
+
+  toggleVideoBtn.onclick = toggleVideo;
+  toggleChatBtn.onclick = () => chatBox.classList.toggle('hidden');
+  chatForm.onsubmit = sendMessage;
+  window.onbeforeunload = cleanup;
 }
 
-function createVideoElement(id, stream, name = "") {
-  const container = document.createElement("div");
-  container.className = "relative";
-
-  const video = document.createElement("video");
+function addVideoElement(id, stream, label) {
+  if (document.getElementById('container-' + id)) return;
+  const container = document.createElement('div');
+  container.id = 'container-' + id;
+  container.className = 'flex flex-col items-center';
+  const video = document.createElement('video');
+  video.id = 'video-' + id;
   video.srcObject = stream;
   video.autoplay = true;
   video.playsInline = true;
-  video.className = "rounded-xl max-w-[300px] max-h-[200px] cursor-pointer";
-  video.id = id;
-
-  const label = document.createElement("div");
-  label.textContent = name;
-  label.className = "text-center mt-2 text-sm text-white";
-
-  video.addEventListener("click", () => {
-    video.classList.toggle("w-full");
-    video.classList.toggle("h-full");
-    video.classList.toggle("z-50");
-  });
-
+  video.muted = (id === 'local');
+  const nameLabel = document.createElement('div');
+  nameLabel.textContent = label;
+  nameLabel.className = 'mt-1 text-center text-sm text-gray-300';
   container.appendChild(video);
-  container.appendChild(label);
-  return { video, container };
+  container.appendChild(nameLabel);
+  videos.appendChild(container);
 }
 
-function removePeer(id) {
-  const vid = document.getElementById(id);
-  if (vid && vid.parentElement) {
-    vid.parentElement.remove();
+function removeVideoElement(id) {
+  const container = document.getElementById('container-' + id);
+  if (container) container.remove();
+}
+
+async function createPeerConnection(peerId, peerName, isOfferer) {
+  if (peers[peerId]) return;
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+  localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+  pc.onicecandidate = e => {
+    if (e.candidate) sendSignal({ type: 'candidate', candidate: e.candidate, from: userId, to: peerId });
+  };
+
+  pc.ontrack = e => {
+    const [stream] = e.streams;
+    addVideoElement(peerId, stream, peerName);
+  };
+
+  peers[peerId] = pc;
+
+  if (isOfferer) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    sendSignal({ type: 'offer', sdp: offer, from: userId, to: peerId });
   }
+}
+
+async function handleOffer(fromId, sdp) {
+  await createPeerConnection(fromId, peerNames[fromId] || "Peer", false);
+  await peers[fromId].setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer = await peers[fromId].createAnswer();
+  await peers[fromId].setLocalDescription(answer);
+  sendSignal({ type: 'answer', sdp: answer, from: userId, to: fromId });
+}
+
+async function handleAnswer(fromId, sdp) {
+  if (peers[fromId]) await peers[fromId].setRemoteDescription(new RTCSessionDescription(sdp));
+}
+
+async function handleCandidate(fromId, candidate) {
+  if (peers[fromId]) await peers[fromId].addIceCandidate(new RTCIceCandidate(candidate));
 }
 
 function toggleVideo() {
-  const enabled = localStream.getVideoTracks()[0].enabled;
-  localStream.getVideoTracks()[0].enabled = !enabled;
-}
-
-function disconnectCall() {
-  if (peer.id) {
-    db.collection("calls").doc("room").collection("peers").doc(peer.id).delete();
+  const videoTrack = localStream.getVideoTracks()[0];
+  if (videoTrack) {
+    videoTrack.enabled = !videoTrack.enabled;
+    toggleVideoBtn.textContent = videoTrack.enabled ? "Video Off" : "Video On";
   }
-  peer.destroy();
-  window.location.reload();
 }
 
-function toggleChat() {
-  chatSidebar.classList.toggle("translate-x-full");
+async function sendMessage(e) {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (text) {
+    await roomRef.collection('chat').add({ senderId: userId, senderName: userName, text, timestamp: Date.now() });
+    chatInput.value = '';
+  }
 }
 
-function sendMessage() {
-  const msg = chatInput.value.trim();
-  if (!msg) return;
-  const timestamp = new Date().toLocaleTimeString();
-  const messageEl = document.createElement("div");
-  messageEl.innerHTML = `<strong>${username}</strong> <span class='text-xs text-gray-400'>[${timestamp}]</span><br>${msg}`;
-  chatMessages.appendChild(messageEl);
-  chatInput.value = "";
-  chatMessages.scrollTop = chatMessages.scrollHeight;
+async function cleanup() {
+  if (userId) await usersRef.doc(userId).delete().catch(() => {});
+  Object.values(peers).forEach(pc => pc.close());
+  peers = {};
+  if (localStream) localStream.getTracks().forEach(track => track.stop());
+  removeVideoElement('local');
+  nameModal.style.display = 'flex';
 }
 
-function updateTimer() {
-  const now = Date.now();
-  const diff = Math.floor((now - startTime) / 1000);
-  timerEl.textContent = `Connected: ${diff}s`;
+function sendSignal(data) {
+  signalsRef.add(data);
 }
