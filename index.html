@@ -1,26 +1,34 @@
 <!DOCTYPE html>
 <html lang="en" class="bg-gray-900 text-white">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Group Video Chat</title>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
-  <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-  <script defer src="script.js"></script>
-  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet" />
 </head>
-<body class="bg-gray-900 text-white">
+<body class="flex flex-col h-screen bg-gray-900 text-white">
+
   <!-- Name Popup -->
-  <div id="nameModal" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
-    <div class="bg-gray-800 p-6 rounded-xl text-center">
-      <h1 class="text-xl mb-4">Enter your name</h1>
-      <input id="nameInput" class="p-2 rounded bg-gray-700 text-white w-64" placeholder="Your name" />
-      <button onclick="start()" class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded">Join</button>
+  <div id="namePopup" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+    <div class="bg-gray-800 p-6 rounded-xl shadow-lg w-80 text-center">
+      <h2 class="text-xl mb-4">Enter your name</h2>
+      <input id="usernameInput" class="w-full p-2 rounded bg-gray-700 text-white mb-4" type="text" placeholder="Your name" />
+      <button onclick="joinCall()" class="bg-green-500 hover:bg-green-600 px-4 py-2 rounded text-white">Join</button>
     </div>
   </div>
 
   <!-- Video Grid -->
-  <div id="video-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 p-4"></div>
+  <div id="video-grid" class="grid grid-cols-2 md:grid-cols-3 gap-4 p-4 overflow-y-auto flex-grow"></div>
+
+  <!-- Control Bar -->
+  <div class="p-3 bg-gray-800 flex justify-center space-x-4">
+    <button onclick="toggleVideo()" class="bg-blue-600 px-4 py-2 rounded">Toggle Video</button>
+    <button onclick="disconnect()" class="bg-red-600 px-4 py-2 rounded">Disconnect</button>
+  </div>
+
+  <script src="script.js"></script>
 </body>
 </html>
