@@ -1,61 +1,25 @@
 <!DOCTYPE html>
 <html lang="en" class="bg-gray-900 text-white">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Group Video Chat</title>
   <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    #videos {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1rem;
-      justify-content: center;
-    }
-    video {
-      width: 240px;
-      height: 180px;
-      background: black;
-      border-radius: 0.5rem;
-      object-fit: cover;
-    }
-  </style>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
+  <script src="script.js" defer></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
-<body class="bg-gray-900 text-white min-h-screen flex flex-col items-center p-4">
+<body class="flex flex-col items-center justify-center h-screen p-4">
+  <div id="video-grid" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 w-full max-w-7xl"></div>
 
-  <!-- Modal -->
-  <div id="nameModal" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
-    <div class="bg-gray-800 p-6 rounded-lg w-80 text-center">
-      <h2 class="text-xl mb-4">Enter your name</h2>
-      <input id="nameInput" type="text" placeholder="Your name" class="w-full p-2 rounded text-black" />
-      <button id="joinBtn" class="mt-4 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white w-full">Join</button>
+  <!-- Name Popup -->
+  <div id="name-popup" class="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50">
+    <div class="bg-gray-800 p-6 rounded-xl text-center shadow-xl space-y-4">
+      <h2 class="text-2xl font-bold">Enter Your Name</h2>
+      <input id="name-input" class="w-full p-2 rounded bg-gray-700 text-white" type="text" placeholder="Your name" />
+      <button onclick="start()" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded text-white w-full">Join</button>
     </div>
   </div>
-
-  <!-- Video Elements -->
-  <div id="videos" class="mb-4"></div>
-
-  <!-- Controls -->
-  <div class="flex fixed bottom-4 gap-4 mb-4">
-    <button id="toggleVideoBtn" class="bg-gray-700 rounded-full hover:bg-gray-600 px-4 py-2">Video</button>
-    <button id="toggleChatBtn" class="bg-gray-700 rounded-full hover:bg-gray-600 px-4 py-2">Chat</button>
-    <a href="https://beastcut.github.io/Rohit-Unfiltered/study/index.html" class="bg-red-700 rounded-full hover:bg-red-600 px-4 py-2 text-white">Leave</a>
-  </div>
-
-  <!-- Chat -->
-  <div id="chatBox" class="fixed right-4 top-16 bottom-4 w-80 bg-gray-800 rounded p-4 flex flex-col hidden shadow-lg">
-    <div id="chatMessages" class="flex-grow overflow-y-auto mb-4 space-y-2"></div>
-    <form id="chatForm" class="flex gap-2">
-      <input id="chatInput" autocomplete="off" placeholder="Type a message..." class="flex-grow p-2 rounded text-black" />
-      <button type="submit" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white">Send</button>
-    </form>
-  </div>
-
-<script src="script.js">
-</script>
-
 </body>
 </html>
