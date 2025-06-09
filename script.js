@@ -12,68 +12,103 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-const videoGrid = document.getElementById('video-grid');
 let localStream;
-let name = "";
-let peer = null;
+let peer;
+let name;
 const peers = {};
+const videoGrid = document.getElementById("video-grid");
 
-function start() {
-  name = document.getElementById('name-input').value.trim();
-  if (!name) return;
+// Ask name and start
+window.start = async () => {
+  name = document.getElementById("nameInput").value.trim();
+  if (!name) return alert("Please enter a name");
 
-  document.getElementById('name-popup').style.display = 'none';
+  document.getElementById("nameModal").style.display = "none";
 
-  navigator.mediaDevices.getUserMedia({ video: true, audio: false }).then(stream => {
-    localStream = stream;
-    addVideoStream("Me", stream, peer?.id);
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
 
-    peer = new Peer();
-    peer.on('open', id => {
-      db.ref('video-room').push({ id, name });
+  const localVideo = createVideoElement(localStream, name);
+  videoGrid.appendChild(localVideo);
 
-      db.ref('video-room').on('child_added', snapshot => {
-        const peerData = snapshot.val();
-        if (peerData.id !== id) connectToNewUser(peerData.id, stream, peerData.name);
-      });
-    });
+  peer = new Peer(undefined, {
+    host: "peerjs.com",
+    secure: true,
+    port: 443
+  });
 
-    peer.on('call', call => {
-      call.answer(stream);
-      call.on('stream', remoteStream => {
-        if (!peers[call.peer]) addVideoStream(call.metadata.name, remoteStream, call.peer);
+  peer.on("open", id => {
+    db.ref("video-users/" + id).set({ name });
+    db.ref("video-users/" + id).onDisconnect().remove();
+  });
+
+  peer.on("call", call => {
+    call.answer(localStream);
+    call.on("stream", remoteStream => {
+      if (!peers[call.peer]) {
+        const remoteVideo = createVideoElement(remoteStream, "");
+        remoteVideo.id = `video-${call.peer}`;
+        videoGrid.appendChild(remoteVideo);
+
+        db.ref("video-users/" + call.peer).once("value", snap => {
+          if (snap.exists()) {
+            remoteVideo.querySelector("p").textContent = snap.val().name;
+          }
+        });
+
         peers[call.peer] = call;
-      });
+      }
     });
   });
-}
 
-function connectToNewUser(userId, stream, remoteName) {
-  const call = peer.call(userId, stream, { metadata: { name } });
-  call.on('stream', userVideoStream => {
-    if (!peers[userId]) addVideoStream(remoteName, userVideoStream, userId);
+  db.ref("video-users").on("child_added", snap => {
+    const userId = snap.key;
+    const userName = snap.val().name;
+
+    if (userId !== peer.id) {
+      const call = peer.call(userId, localStream);
+      call.on("stream", remoteStream => {
+        if (!peers[userId]) {
+          const remoteVideo = createVideoElement(remoteStream, userName);
+          remoteVideo.id = `video-${userId}`;
+          videoGrid.appendChild(remoteVideo);
+          peers[userId] = call;
+        }
+      });
+
+      call.on("close", () => {
+        const vid = document.getElementById(`video-${userId}`);
+        if (vid) vid.remove();
+        delete peers[userId];
+      });
+    }
   });
-  peers[userId] = call;
-}
 
-function addVideoStream(userName, stream, id) {
-  if (document.getElementById(id)) return;
+  db.ref("video-users").on("child_removed", snap => {
+    const userId = snap.key;
+    const vid = document.getElementById(`video-${userId}`);
+    if (vid) vid.remove();
+    if (peers[userId]) {
+      peers[userId].close();
+      delete peers[userId];
+    }
+  });
+};
 
-  const container = document.createElement('div');
-  container.id = id;
-  container.className = "bg-gray-800 rounded-lg p-2 shadow-md flex flex-col items-center";
+function createVideoElement(stream, label = "") {
+  const wrapper = document.createElement("div");
+  wrapper.className = "relative rounded overflow-hidden shadow-lg";
 
-  const video = document.createElement('video');
+  const video = document.createElement("video");
   video.srcObject = stream;
   video.autoplay = true;
   video.playsInline = true;
-  video.className = "rounded-xl w-48 h-32 object-cover";
+  video.className = "rounded w-full h-64 object-cover";
 
-  const label = document.createElement('div');
-  label.className = "mt-2 text-sm text-purple-400 font-semibold";
-  label.textContent = userName;
+  const nameTag = document.createElement("p");
+  nameTag.textContent = label;
+  nameTag.className = "absolute bottom-0 left-0 right-0 bg-black bg-opacity-60 text-white text-center py-1 text-sm";
 
-  container.appendChild(video);
-  container.appendChild(label);
-  videoGrid.appendChild(container);
+  wrapper.appendChild(video);
+  wrapper.appendChild(nameTag);
+  return wrapper;
 }
